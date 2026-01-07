@@ -1,4 +1,4 @@
-name: Build + Trivy Scan + Push
+name: Build + SonarQube + Trivy Scan + Push
 
 on:
   push:
@@ -10,10 +10,54 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ✅ Important for Sonar: full history (better PR analysis/blame)
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # 1) Trivy scan your repo (deps, secrets, misconfig)
+      # -------------------------
+      # 0) (Recommended) Run tests + generate coverage for SonarQube
+      # -------------------------
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest pytest-cov
+
+      - name: Run tests with coverage
+        run: |
+          pytest --cov=. --cov-report=xml --cov-report=term
+
+      # -------------------------
+      # 1) SonarQube scan + Quality Gate
+      # -------------------------
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
+            -Dsonar.sources=.
+            -Dsonar.python.coverage.reportPaths=coverage.xml
+            -Dsonar.exclusions=**/.github/**,**/venv/**,**/__pycache__/**,**/*.md
+
+      - name: SonarQube Quality Gate
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      # -------------------------
+      # 2) Trivy scan your repo (deps, secrets, misconfig)
+      # -------------------------
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@0.24.0
         with:
@@ -25,14 +69,14 @@ jobs:
           vuln-type: os,library
           exit-code: 1
 
-      # 2) Log in to Docker Hub
+      # 3) Log in to Docker Hub
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 3) Build image locally (do NOT push yet)
+      # 4) Build image locally (do NOT push yet)
       - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
@@ -40,7 +84,7 @@ jobs:
           push: false
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/devops-python-app:latest
 
-      # 4) Trivy scan the built image
+      # 5) Trivy scan the built image
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@0.24.0
         with:
@@ -51,7 +95,7 @@ jobs:
           vuln-type: os,library
           exit-code: 1
 
-      # 5) Push only if scans passed
+      # 6) Push only if all scans passed
       - name: Push Docker image
         uses: docker/build-push-action@v5
         with:
