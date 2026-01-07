@@ -23,4 +23,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/devops-python-app:latest
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/devops-python-app:v1
